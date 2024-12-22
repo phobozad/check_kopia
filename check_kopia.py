@@ -12,6 +12,10 @@ parser.add_argument("-H", "--host",  metavar="HOST", dest="host", help="Host nam
 parser.add_argument("-p", "--port", metavar="PORT", type=int, dest="port", help="HTTP/HTTPS port to connect on. Default=51515", default=51515)
 parser.add_argument("--ignore-cert", dest="verify_ssl", help="Ignore any TLS certificate warnings e.g. for self-signed cert.", action='store_false')
 parser.add_argument("--http", dest="insecure", help="Use HTTP rather than https", action='store_true')
+parser.add_argument("--basic-auth", dest="http_basic_auth", help="Authenticate with username and password (HTTP Basic Auth)", action='store_true')
+parser.add_argument("--user",  metavar="USERNAME", dest="username", help="Kopia Login Username (if using HTTP basic auth)")
+parser.add_argument("--pass",  metavar="PASSWORD", dest="password", help="Kopia Login Password (if using HTTP basic auth)")
+
 
 args = parser.parse_args()
 
@@ -19,11 +23,27 @@ args = parser.parse_args()
 
 host = args.host
 port = args.port
+auth = None
 verify_ssl = args.verify_ssl
 if args.insecure:
     schema = "http"
 else:
     schema = "https"
+
+
+# Authentiction option validation
+if args.http_basic_auth:
+    if not args.username or not args.password:
+        print("Missing username/password with HTTP basic auth enabled")
+        sys.exit(-1)
+    else:
+        username = args.username
+        password = args.password
+        auth = "basic"
+
+if (args.username or args.password) and not args.http_basic_auth:
+    print("Username/Password provided, but HTTP Basic auth not enabled. Ensure --basic-auth is being used on the command")
+    sys.exit(-1)
 
 
 status_detail = {}
@@ -33,11 +53,14 @@ def result(status_code, message):
     print(message)
     sys.exit(status_code)
 
-
+# Setup HTTP Session and parameters
 http_session = requests.Session()
 if verify_ssl == False:
     http_session.verify = False
     requests.packages.urllib3.disable_warnings()
+
+if auth == "basic":
+    http_session.auth = requests.auth.HTTPBasicAuth(username, password)
 
 response = None
 response = http_session.get(f"{schema}://{host}:{port}/")
