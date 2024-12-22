@@ -10,7 +10,7 @@ import lxml.html
 parser = argparse.ArgumentParser(description="Query Kopia API to get backup status for Nagios monitoring")
 parser.add_argument("-H", "--host",  metavar="HOST", dest="host", help="Host name or IP", required=True)
 parser.add_argument("-p", "--port", metavar="PORT", type=int, dest="port", help="HTTP/HTTPS port to connect on. Default=51515", default=51515)
-parser.add_argument("--ignore-cert", dest="ignore_cert", help="Ignore any TLS certificate warnings e.g. for self-signed cert.", action='store_true')
+parser.add_argument("--ignore-cert", dest="verify_ssl", help="Ignore any TLS certificate warnings e.g. for self-signed cert.", action='store_false')
 parser.add_argument("--http", dest="insecure", help="Use HTTP rather than https", action='store_true')
 
 args = parser.parse_args()
@@ -19,7 +19,7 @@ args = parser.parse_args()
 
 host = args.host
 port = args.port
-ignoressl = args.ignore_cert
+verify_ssl = args.verify_ssl
 if args.insecure:
     schema = "http"
 else:
@@ -34,10 +34,10 @@ def result(status_code, message):
     sys.exit(status_code)
 
 
-# TODO: implement SSL certificate ignore flag
-
-
 http_session = requests.Session()
+if verify_ssl == False:
+    http_session.verify = False
+    requests.packages.urllib3.disable_warnings()
 
 response = None
 response = http_session.get(f"{schema}://{host}:{port}/")
