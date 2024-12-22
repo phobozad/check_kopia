@@ -3,6 +3,7 @@
 import sys
 import requests
 import argparse
+import lxml.html
 
 
 # Argument Parsing
@@ -25,19 +26,57 @@ else:
     schema = "https"
 
 
-nagios_status_code = 3
+status_detail = {}
 
 # Run this function to output status and Exit
-def result(message):
-    global nagios_status_code
+def result(status_code, message):
     print(message)
-    sys.exit(nagios_status_code)
+    sys.exit(status_code)
 
 
 # TODO: implement SSL certificate ignore flag
-res = requests.get(f"{schema}://{host}:{port}/api/v1/repo/status")
-if res.status_code != 200:
-    nagios_status_code = 3
-    result(f"HTTP Error from API: {res.status_code}")
 
 
+http_session = requests.Session()
+
+response = None
+response = http_session.get(f"{schema}://{host}:{port}/")
+if response.status_code != requests.codes.ok:
+    result(3,f"HTTP Error when getting CSRF token: {response.status_code}\n{response.text.strip()}")
+
+# Parse out <meta name="kopia-csrf-token" content="abcxyz"/> from <head> to get the CSRF token needed by the API calls
+html_doc = lxml.html.document_fromstring(response.content)
+csrf_element = html_doc.xpath("//meta[@name='kopia-csrf-token']")
+if len(csrf_element) < 1:
+    result(3,"Unable to parse CSRF token from HTTP response")
+csrf_token = csrf_element[0].attrib['content']
+
+
+# Now actually make API calls using the token
+
+http_session.headers.update({"X-Kopia-Csrf-Token": csrf_token})
+
+response = None
+response = http_session.get(f"{schema}://{host}:{port}/api/v1/repo/status")
+if response.status_code != requests.codes.ok:
+    result(3,f"HTTP Error from API: {response.status_code}\n{response.text.strip()}")
+
+status_detail['repo_connected'] = response.json()['connected']
+
+
+# Logic to determine status/state
+# 0 = OK
+# 1 = Warning
+# 2 = Critical
+# 3 = Unknown
+
+if not status_detail['repo_connected']:
+    result(2,"Repository disconnected.")
+
+# If we got here, then everything above is good - set status code to OK
+status_message = f"OK: Repository Connnected"
+result(0,status_message)
+
+
+# Catch-all at the end.  We should never get here so if we did, then its unknown state (3)
+sys.exit(3)
