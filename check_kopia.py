@@ -11,6 +11,8 @@ import dateutil.parser
 
 # Argument Parsing
 parser = argparse.ArgumentParser(description="Query Kopia API to get backup status for Nagios monitoring")
+parser.add_argument("-w", metavar="HOURS", type=int, dest="warn_thresh", help="Warning threshold for missed snapshots", required=True)
+parser.add_argument("-c", metavar="HOURS", type=int, dest="crit_thresh", help="Critical threshold for missed snapshots", required=True)
 parser.add_argument("-H", "--host",  metavar="HOST", dest="host", help="Host name or IP", required=True)
 parser.add_argument("-p", "--port", metavar="PORT", type=int, dest="port", help="HTTP/HTTPS port to connect on. Default=51515", default=51515)
 parser.add_argument("--ignore-cert", dest="verify_ssl", help="Ignore any TLS certificate warnings e.g. for self-signed cert.", action='store_false')
@@ -48,7 +50,11 @@ if (args.username or args.password) and not args.http_basic_auth:
     print("Username/Password provided, but HTTP Basic auth not enabled. Ensure --basic-auth is being used on the command")
     sys.exit(-1)
 
+delta_hours_warning = args.warn_thresh
+delta_hours_critical = args.crit_thresh
 
+
+# Setup dict to store the parsed data we gather for analysis
 status_detail = {}
 
 # Run this function to output status and Exit
@@ -131,8 +137,6 @@ if not status_detail['repo_connected']:
 
 late_snapshots = []
 time_now = datetime.now(timezone.utc)
-delta_hours_warning = 24
-delta_hours_critical = 168
 
 for source in status_detail['next_snapshots']:
     if timedelta(hours = delta_hours_critical * -1) > (source['time_next'] - time_now):
