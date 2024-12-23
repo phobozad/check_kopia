@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
 import sys
-import requests
 import argparse
+from datetime import datetime,timezone,timedelta
+
+import requests
 import lxml.html
+import dateutil.parser
 
 
 # Argument Parsing
@@ -79,12 +82,41 @@ csrf_token = csrf_element[0].attrib['content']
 
 http_session.headers.update({"X-Kopia-Csrf-Token": csrf_token})
 
+# Get Repo connected status
 response = None
 response = http_session.get(f"{schema}://{host}:{port}/api/v1/repo/status")
 if response.status_code != requests.codes.ok:
     result(3,f"HTTP Error from API: {response.status_code}\n{response.text.strip()}")
 
 status_detail['repo_connected'] = response.json()['connected']
+
+# Get snapshot status
+response = None
+response = http_session.get(f"{schema}://{host}:{port}/api/v1/sources")
+if response.status_code != requests.codes.ok:
+    result(3,f"HTTP Error from API: {response.status_code}\n{response.text.strip()}")
+
+sources = response.json()['sources']
+
+status_detail['next_snapshots'] = []
+
+for source in sources:
+    # Skip any manually scheduled snapshots with no next snapshot time
+    if "nextSnapshotTime" not in source:
+        continue
+
+    next_snapshot_datetime = dateutil.parser.isoparse(source['nextSnapshotTime'])
+    next_snapshot_username = source['source']['userName']
+    next_snapshot_host = source['source']['host']
+    next_snapshot_path = source['source']['path']
+
+    next_snapshot_dict = { 
+            "username": next_snapshot_username, 
+            "host": next_snapshot_host, 
+            "path": next_snapshot_path, 
+            "time_next": next_snapshot_datetime
+    }
+    status_detail['next_snapshots'].append(next_snapshot_dict)
 
 
 # Logic to determine status/state
@@ -93,8 +125,70 @@ status_detail['repo_connected'] = response.json()['connected']
 # 2 = Critical
 # 3 = Unknown
 
+# Connected check
 if not status_detail['repo_connected']:
     result(2,"Repository disconnected.")
+
+late_snapshots = []
+time_now = datetime.now(timezone.utc)
+delta_hours_warning = 24
+delta_hours_critical = 168
+
+for source in status_detail['next_snapshots']:
+    if timedelta(hours = delta_hours_critical * -1) > (source['time_next'] - time_now):
+        # Critical
+        late_snapshot_dict = source
+        late_snapshot_dict['severity'] = "critical"
+        late_snapshots.append(late_snapshot_dict)
+        continue
+
+    if timedelta(hours = delta_hours_warning * -1) > (source['time_next'] - time_now):
+        # Warning
+        late_snapshot_dict = source
+        late_snapshot_dict['severity'] = "warning"
+        late_snapshots.append(late_snapshot_dict)
+        continue
+
+# Determine if any snapshots are late. Raise the error level to the worst if some are warn and some crit
+if len(late_snapshots) > 0:
+    status_message = ""
+
+    critical_count = len([snapshot for snapshot in late_snapshots if snapshot['severity']=="critical" ])
+    warning_count  = len([snapshot for snapshot in late_snapshots if snapshot['severity']=="warning" ])
+
+    # Any critical items mean we return critical(2).  Otherwise its all warnings
+    if critical_count > 0:
+        overall_severity = 2
+    else:
+        overall_severity = 1
+    
+    # Summary output if there are more than two out of sync to keep the output short
+    if critical_count + warning_count > 2:
+        status_message = "Multiple snapshots are late. "
+
+        if critical_count > 0 and warning_count > 0:
+            status_message += f"{critical_count} more than {delta_hours_critical} {'hours'}; {warning_count} more than delta_hours_warning {'hours'}"
+        elif critical_count > 0:
+            status_message += f"{critical_count} more than {delta_hours_critical} {'hours'}"
+        else:
+            status_message += f"{warning_count} more than {delta_hours_warning} {'hours'}"
+
+        result(overall_severity,status_message)
+
+    # Otherwise we can be verbose about which ones exactly
+    status_message = "Snapshots late:"
+    for snapshot in late_snapshots:
+        snapshot_desc = f"{snapshot['username']}@{snapshot['host']}:{snapshot['path']}"
+        if snapshot['severity'] == "critical":
+            snapshot_lateness = f"{delta_hours_critical} {'hours'} late"
+        else:
+            snapshot_lateness = f"{delta_hours_warning} {'hours'} late"
+
+        status_message += " " + snapshot_desc + " - " + snapshot_lateness + ";"
+
+    result(overall_severity,status_message)
+
+
 
 # If we got here, then everything above is good - set status code to OK
 status_message = f"OK: Repository Connnected"
