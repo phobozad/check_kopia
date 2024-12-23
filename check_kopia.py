@@ -64,41 +64,45 @@ if (args.username or args.password) and not args.http_basic_auth:
     print("Username/Password provided, but HTTP Basic auth not enabled. Ensure --basic-auth is being used on the command")
     sys.exit(-1)
 
-if "m" in args.warn_thresh:
-    warning_delta_units = "minutes"
-    warning_delta_value = int(args.warn_thresh[:-1])
-    warning_delta = timedelta(minutes = warning_delta_value * -1)
-elif "d" in args.warn_thresh:
-    warning_delta_units = "days"
-    warning_delta_value = int(args.warn_thresh[:-1])
-    warning_delta = timedelta(days = warning_delta_value * -1)
-elif "h" in args.warn_thresh:
-    warning_delta_units = "hours"
-    warning_delta_value = int(args.warn_thresh[:-1])
-    warning_delta = timedelta(hours = warning_delta_value * -1)
-else:
-    # Default assumes hours
-    warning_delta_units = "hours"
-    warning_delta_value = int(args.warn_thresh)
-    warning_delta = timedelta(hours = warning_delta_value * -1)
+time_postfixes = ("m","h","d")
 
-if "m" in args.crit_thresh:
-    critical_delta_units = "minutes"
-    critical_delta_value = int(args.crit_thresh[:-1])
-    critical_delta = timedelta(minutes = critical_delta_value * -1)
-elif "d" in args.crit_thresh:
-    critical_delta_units = "days"
-    critical_delta_value = int(args.crit_thresh[:-1])
-    critical_delta = timedelta(days = critical_delta_value * -1)
-elif "h" in args.crit_thresh:
-    critical_delta_units = "hours"
-    critical_delta_value = int(args.crit_thresh[:-1])
-    critical_delta = timedelta(hours = critical_delta_value * -1)
+# Warning threshold parsing
+warning_delta_args = {}
+if any(postfix in args.warn_thresh for postfix in time_postfixes):
+    warning_delta_value = int(args.warn_thresh[:-1]) * -1
+
+    if "m" in args.warn_thresh:
+        warning_delta_units = "minutes"
+    elif "d" in args.warn_thresh:
+        warning_delta_units = "days"
+    elif "h" in args.warn_thresh:
+        warning_delta_units = "hours"
 else:
     # Default assumes hours
+    warning_delta_value = int(args.warn_thresh) * -1
+    warning_delta_units = "hours"
+
+warning_delta_args[warning_delta_units] = warning_delta_value
+warning_delta = timedelta(**warning_delta_args)
+
+# Critical threshold parsing
+critical_delta_args = {}
+if any(postfix in args.crit_thresh for postfix in time_postfixes):
+    critical_delta_value = int(args.crit_thresh[:-1]) * -1
+
+    if "m" in args.crit_thresh:
+        critical_delta_units = "minutes"
+    elif "d" in args.crit_thresh:
+        critical_delta_units = "days"
+    elif "h" in args.crit_thresh:
+        critical_delta_units = "hours"
+else:
+    # Default assumes hours
+    critical_delta_value = int(args.crit_thresh) * -1
     critical_delta_units = "hours"
-    critical_delta_value = int(args.crit_thresh)
-    critical_delta = timedelta(hours = critical_delta_value * -1)
+
+critical_delta_args[critical_delta_units] = critical_delta_value
+critical_delta = timedelta(**critical_delta_args)
 
 
 # Setup dict to store the parsed data we gather for analysis
