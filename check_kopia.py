@@ -3,6 +3,7 @@
 import sys
 import argparse
 from datetime import datetime,timezone,timedelta
+import re
 
 import requests
 import lxml.html
@@ -10,9 +11,22 @@ import dateutil.parser
 
 
 # Argument Parsing
-parser = argparse.ArgumentParser(description="Query Kopia API to get backup status for Nagios monitoring")
-parser.add_argument("-w", metavar="HOURS", type=int, dest="warn_thresh", help="Warning threshold for missed snapshots", required=True)
-parser.add_argument("-c", metavar="HOURS", type=int, dest="crit_thresh", help="Critical threshold for missed snapshots", required=True)
+def regex_type(pattern: re.Pattern):
+    """Argument type for matching a regex pattern."""
+
+    def closure_check_regex(arg_value):
+        if not re.match(pattern, arg_value):
+            raise argparse.ArgumentTypeError("invalid value")
+        return arg_value
+
+    return closure_check_regex
+
+cli_description_top =  "Query Kopia API to get backup status for Nagios monitoring"
+cli_description_bottom = "Time fields default to hours.  For other units, add a postfix (m/h/d) for minutes/hours/days. (e.g. 7d)"
+
+parser = argparse.ArgumentParser(description=cli_description_top, epilog=cli_description_bottom)
+parser.add_argument("-w", metavar="TIME", type=regex_type(r"^[0-9]+[h,m,d]?$"), dest="warn_thresh", help="Warning threshold for missed snapshots (hours by default)", required=True)
+parser.add_argument("-c", metavar="TIME", type=regex_type(r"^[0-9]+[h,m,d]?$"), dest="crit_thresh", help="Critical threshold for missed snapshots (hours by default)", required=True)
 parser.add_argument("-H", "--host",  metavar="HOST", dest="host", help="Host name or IP", required=True)
 parser.add_argument("-p", "--port", metavar="PORT", type=int, dest="port", help="HTTP/HTTPS port to connect on. Default=51515", default=51515)
 parser.add_argument("--ignore-cert", dest="verify_ssl", help="Ignore any TLS certificate warnings e.g. for self-signed cert.", action='store_false')
@@ -50,8 +64,41 @@ if (args.username or args.password) and not args.http_basic_auth:
     print("Username/Password provided, but HTTP Basic auth not enabled. Ensure --basic-auth is being used on the command")
     sys.exit(-1)
 
-delta_hours_warning = args.warn_thresh
-delta_hours_critical = args.crit_thresh
+if "m" in args.warn_thresh:
+    warning_delta_units = "minutes"
+    warning_delta_value = int(args.warn_thresh[:-1])
+    warning_delta = timedelta(minutes = warning_delta_value * -1)
+elif "d" in args.warn_thresh:
+    warning_delta_units = "days"
+    warning_delta_value = int(args.warn_thresh[:-1])
+    warning_delta = timedelta(days = warning_delta_value * -1)
+elif "h" in args.warn_thresh:
+    warning_delta_units = "hours"
+    warning_delta_value = int(args.warn_thresh[:-1])
+    warning_delta = timedelta(hours = warning_delta_value * -1)
+else:
+    # Default assumes hours
+    warning_delta_units = "hours"
+    warning_delta_value = int(args.warn_thresh)
+    warning_delta = timedelta(hours = warning_delta_value * -1)
+
+if "m" in args.crit_thresh:
+    critical_delta_units = "minutes"
+    critical_delta_value = int(args.crit_thresh[:-1])
+    critical_delta = timedelta(minutes = critical_delta_value * -1)
+elif "d" in args.crit_thresh:
+    critical_delta_units = "days"
+    critical_delta_value = int(args.crit_thresh[:-1])
+    critical_delta = timedelta(days = critical_delta_value * -1)
+elif "h" in args.crit_thresh:
+    critical_delta_units = "hours"
+    critical_delta_value = int(args.crit_thresh[:-1])
+    critical_delta = timedelta(hours = critical_delta_value * -1)
+else:
+    # Default assumes hours
+    critical_delta_units = "hours"
+    critical_delta_value = int(args.crit_thresh)
+    critical_delta = timedelta(hours = critical_delta_value * -1)
 
 
 # Setup dict to store the parsed data we gather for analysis
@@ -139,14 +186,14 @@ late_snapshots = []
 time_now = datetime.now(timezone.utc)
 
 for source in status_detail['next_snapshots']:
-    if timedelta(hours = delta_hours_critical * -1) > (source['time_next'] - time_now):
+    if critical_delta > (source['time_next'] - time_now):
         # Critical
         late_snapshot_dict = source
         late_snapshot_dict['severity'] = "critical"
         late_snapshots.append(late_snapshot_dict)
         continue
 
-    if timedelta(hours = delta_hours_warning * -1) > (source['time_next'] - time_now):
+    if warning_delta > (source['time_next'] - time_now):
         # Warning
         late_snapshot_dict = source
         late_snapshot_dict['severity'] = "warning"
@@ -168,14 +215,14 @@ if len(late_snapshots) > 0:
     
     # Summary output if there are more than two out of sync to keep the output short
     if critical_count + warning_count > 2:
-        status_message = "Multiple snapshots are late. "
+        status_message = "Multiple snapshots are late: "
 
         if critical_count > 0 and warning_count > 0:
-            status_message += f"{critical_count} more than {delta_hours_critical} {'hours'}; {warning_count} more than delta_hours_warning {'hours'}"
+            status_message += f"{critical_count} more than {critical_delta_value} {critical_delta_units}; {warning_count} more than {warning_delta_value} {warning_delta_units}"
         elif critical_count > 0:
-            status_message += f"{critical_count} more than {delta_hours_critical} {'hours'}"
+            status_message += f"{critical_count} more than {critical_delta_value} {critical_delta_units}"
         else:
-            status_message += f"{warning_count} more than {delta_hours_warning} {'hours'}"
+            status_message += f"{warning_count} more than {warning_delta_value} {warning_delta_units}"
 
         result(overall_severity,status_message)
 
@@ -184,9 +231,9 @@ if len(late_snapshots) > 0:
     for snapshot in late_snapshots:
         snapshot_desc = f"{snapshot['username']}@{snapshot['host']}:{snapshot['path']}"
         if snapshot['severity'] == "critical":
-            snapshot_lateness = f"{delta_hours_critical} {'hours'} late"
+            snapshot_lateness = f"{critical_delta_value} {critical_delta_units} late"
         else:
-            snapshot_lateness = f"{delta_hours_warning} {'hours'} late"
+            snapshot_lateness = f"{warning_delta_value} {warning_delta_units} late"
 
         status_message += " " + snapshot_desc + " - " + snapshot_lateness + ";"
 
