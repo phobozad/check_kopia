@@ -186,21 +186,29 @@ for source in sources:
 if not status_detail['repo_connected']:
     result(2,"Repository disconnected.")
 
+
+# Check for late snapshots.  This is based on expected next snapshot time behind too far in the past
 late_snapshots = []
 time_now = datetime.now(timezone.utc)
+critical_time_unit = {critical_delta_units: 1}
+warning_time_unit = {warning_delta_units: 1}
 
 for source in status_detail['next_snapshots']:
-    if critical_delta > (source['time_next'] - time_now):
+    time_since_expected_snapshot = (source['time_next'] - time_now)
+
+    if critical_delta > time_since_expected_snapshot:
         # Critical
         late_snapshot_dict = source
         late_snapshot_dict['severity'] = "critical"
+        late_snapshot_dict['how_late'] = int(time_since_expected_snapshot / timedelta(**critical_time_unit)) * -1
         late_snapshots.append(late_snapshot_dict)
         continue
 
-    if warning_delta > (source['time_next'] - time_now):
+    if warning_delta > time_since_expected_snapshot:
         # Warning
         late_snapshot_dict = source
         late_snapshot_dict['severity'] = "warning"
+        late_snapshot_dict['how_late'] = int(time_since_expected_snapshot / timedelta(**warning_time_unit)) * -1
         late_snapshots.append(late_snapshot_dict)
         continue
 
@@ -221,12 +229,18 @@ if len(late_snapshots) > 0:
     if critical_count + warning_count > 2:
         status_message = "Multiple snapshots are late: "
 
+        # Calculate least-worst time delta to use that in the summary report
+        if critical_count > 0:
+            min_crit_delta_value = min([ snapshot['how_late'] for snapshot in late_snapshots if snapshot['severity']=="critical" ])
+        if warning_count > 0:
+            min_warn_delta_value = min([ snapshot['how_late'] for snapshot in late_snapshots if snapshot['severity']=="warning" ])
+
         if critical_count > 0 and warning_count > 0:
-            status_message += f"{critical_count} more than {critical_delta_value} {critical_delta_units}; {warning_count} more than {warning_delta_value} {warning_delta_units}"
+            status_message += f"{critical_count} more than {min_crit_delta_value} {critical_delta_units}; {warning_count} more than {min_warn_delta_value} {warning_delta_units}"
         elif critical_count > 0:
-            status_message += f"{critical_count} more than {critical_delta_value} {critical_delta_units}"
+            status_message += f"{critical_count} more than {min_crit_delta_value} {critical_delta_units}"
         else:
-            status_message += f"{warning_count} more than {warning_delta_value} {warning_delta_units}"
+            status_message += f"{warning_count} more than {min_warn_delta_value} {warning_delta_units}"
 
         result(overall_severity,status_message)
 
@@ -235,9 +249,9 @@ if len(late_snapshots) > 0:
     for snapshot in late_snapshots:
         snapshot_desc = f"{snapshot['username']}@{snapshot['host']}:{snapshot['path']}"
         if snapshot['severity'] == "critical":
-            snapshot_lateness = f"{critical_delta_value} {critical_delta_units} late"
+            snapshot_lateness = f"more than {snapshot['how_late']} {critical_delta_units} late"
         else:
-            snapshot_lateness = f"{warning_delta_value} {warning_delta_units} late"
+            snapshot_lateness = f"more than {snapshot['how_late']} {warning_delta_units} late"
 
         status_message += " " + snapshot_desc + " - " + snapshot_lateness + ";"
 
