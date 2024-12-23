@@ -7,7 +7,6 @@ import re
 
 import requests
 import lxml.html
-import dateutil.parser
 
 
 # Argument Parsing
@@ -162,7 +161,9 @@ for source in sources:
     if "nextSnapshotTime" not in source:
         continue
 
-    next_snapshot_datetime = dateutil.parser.isoparse(source['nextSnapshotTime'])
+    # Ensure using python 3.11+ to avoid issues with fractional second granularity.
+    # Kopia can use more than 6 decimal places of sub-second precision but python pre-3.11 can't parse more than 6
+    next_snapshot_datetime = datetime.fromisoformat(source['nextSnapshotTime'])
     next_snapshot_username = source['source']['userName']
     next_snapshot_host = source['source']['host']
     next_snapshot_path = source['source']['path']
